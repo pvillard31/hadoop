@@ -1644,6 +1644,13 @@ public class DatanodeManager {
           blkStorageMovementInfosBatch.getBlockMovingInfo()));
     }
 
+    if (nodeinfo.shouldDropSPSWork()) {
+      cmds.add(DropSPSWorkCommand.DNA_DROP_SPS_WORK_COMMAND);
+      // Set back to false to indicate that the new value has been sent to the
+      // datanode.
+      nodeinfo.setDropSPSWork(false);
+    }
+
     if (!cmds.isEmpty()) {
       return cmds.toArray(new DatanodeCommand[cmds.size()]);
     }
@@ -1845,6 +1852,18 @@ public class DatanodeManager {
         * intervalSeconds;
     this.blockInvalidateLimit = Math.max(20 * (int) (intervalSeconds),
         DFSConfigKeys.DFS_BLOCK_INVALIDATE_LIMIT_DEFAULT);
+  }
+
+  /**
+   * Mark all DNs to drop SPS queues. A DNA_DROP_SPS_WORK_COMMAND will be added
+   * in heartbeat response, which will indicate DN to drop SPS queues
+   */
+  public void addDropSPSWorkCommandsToAllDNs() {
+    synchronized (this) {
+      for (DatanodeDescriptor dn : datanodeMap.values()) {
+        dn.setDropSPSWork(true);
+      }
+    }
   }
 }
 
