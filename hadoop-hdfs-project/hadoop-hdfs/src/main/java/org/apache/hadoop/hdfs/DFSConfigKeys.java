@@ -219,7 +219,8 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
 
   public static final String  DFS_NAMENODE_RECONSTRUCTION_PENDING_TIMEOUT_SEC_KEY =
       "dfs.namenode.reconstruction.pending.timeout-sec";
-  public static final int     DFS_NAMENODE_RECONSTRUCTION_PENDING_TIMEOUT_SEC_DEFAULT = -1;
+  public static final int
+      DFS_NAMENODE_RECONSTRUCTION_PENDING_TIMEOUT_SEC_DEFAULT = 300;
 
   public static final String  DFS_NAMENODE_MAINTENANCE_REPLICATION_MIN_KEY =
       "dfs.namenode.maintenance.replication.min";
@@ -424,7 +425,7 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   // event to be logged
   public static final String  DFS_NAMENODE_WRITE_LOCK_REPORTING_THRESHOLD_MS_KEY =
       "dfs.namenode.write-lock-reporting-threshold-ms";
-  public static final long    DFS_NAMENODE_WRITE_LOCK_REPORTING_THRESHOLD_MS_DEFAULT = 1000L;
+  public static final long    DFS_NAMENODE_WRITE_LOCK_REPORTING_THRESHOLD_MS_DEFAULT = 5000L;
   public static final String  DFS_NAMENODE_READ_LOCK_REPORTING_THRESHOLD_MS_KEY =
       "dfs.namenode.read-lock-reporting-threshold-ms";
   public static final long    DFS_NAMENODE_READ_LOCK_REPORTING_THRESHOLD_MS_DEFAULT = 5000L;
@@ -640,6 +641,8 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   public static final long    DFS_BLOCK_ACCESS_KEY_UPDATE_INTERVAL_DEFAULT = 600L;
   public static final String  DFS_BLOCK_ACCESS_TOKEN_LIFETIME_KEY = "dfs.block.access.token.lifetime";
   public static final long    DFS_BLOCK_ACCESS_TOKEN_LIFETIME_DEFAULT = 600L;
+  public static final String  DFS_BLOCK_ACCESS_TOKEN_PROTOBUF_ENABLE = "dfs.block.access.token.protobuf.enable";
+  public static final boolean DFS_BLOCK_ACCESS_TOKEN_PROTOBUF_ENABLE_DEFAULT = false;
 
   public static final String DFS_BLOCK_REPLICATOR_CLASSNAME_KEY = "dfs.block.replicator.classname";
   public static final Class<BlockPlacementPolicyDefault> DFS_BLOCK_REPLICATOR_CLASSNAME_DEFAULT = BlockPlacementPolicyDefault.class;
@@ -703,6 +706,16 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   // Image transfer chunksize
   public static final String DFS_IMAGE_TRANSFER_CHUNKSIZE_KEY = "dfs.image.transfer.chunksize";
   public static final int DFS_IMAGE_TRANSFER_CHUNKSIZE_DEFAULT = 64 * 1024;
+
+  // Edit Log segment transfer timeout
+  public static final String DFS_EDIT_LOG_TRANSFER_TIMEOUT_KEY =
+      "dfs.edit.log.transfer.timeout";
+  public static final int DFS_EDIT_LOG_TRANSFER_TIMEOUT_DEFAULT = 30 * 1000;
+
+  // Throttling Edit Log Segment transfer for Journal Sync
+  public static final String DFS_EDIT_LOG_TRANSFER_RATE_KEY =
+      "dfs.edit.log.transfer.bandwidthPerSec";
+  public static final long DFS_EDIT_LOG_TRANSFER_RATE_DEFAULT = 0; //no throttling
 
   // Datanode File IO Stats
   public static final String DFS_DATANODE_ENABLE_FILEIO_PROFILING_KEY =
@@ -888,6 +901,12 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   public static final String  DFS_JOURNALNODE_KEYTAB_FILE_KEY = "dfs.journalnode.keytab.file";
   public static final String  DFS_JOURNALNODE_KERBEROS_PRINCIPAL_KEY = "dfs.journalnode.kerberos.principal";
   public static final String  DFS_JOURNALNODE_KERBEROS_INTERNAL_SPNEGO_PRINCIPAL_KEY = "dfs.journalnode.kerberos.internal.spnego.principal";
+  public static final String DFS_JOURNALNODE_ENABLE_SYNC_KEY =
+      "dfs.journalnode.enable.sync";
+  public static final boolean DFS_JOURNALNODE_ENABLE_SYNC_DEFAULT = false;
+  public static final String DFS_JOURNALNODE_SYNC_INTERVAL_KEY =
+      "dfs.journalnode.sync.interval";
+  public static final long DFS_JOURNALNODE_SYNC_INTERVAL_DEFAULT = 2*60*1000L;
 
   // Journal-node related configs for the client side.
   public static final String  DFS_QJOURNAL_QUEUE_SIZE_LIMIT_KEY = "dfs.qjournal.queued-edits.limit.mb";

@@ -40,7 +40,7 @@ import org.apache.hadoop.yarn.exceptions.InvalidResourceRequestException;
 import org.apache.hadoop.yarn.security.PrivilegedEntity;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerEventType;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ActiveUsersManager;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.AbstractUsersManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceLimits;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceUsage;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt;
@@ -231,14 +231,6 @@ public interface CSQueue extends SchedulerQueue<CSQueue> {
       boolean sortQueues);
 
   /**
-   * We have a reserved increased container in the queue, we need to unreserve
-   * it. Since we just want to cancel the reserved increase request instead of
-   * stop the container, we shouldn't call completedContainer for such purpose.
-   */
-  public void unreserveIncreasedContainer(Resource clusterResource,
-      FiCaSchedulerApp app, FiCaSchedulerNode node, RMContainer rmContainer);
-
-  /**
    * Get the number of applications in the queue.
    * @return number of applications
    */
@@ -262,10 +254,10 @@ public interface CSQueue extends SchedulerQueue<CSQueue> {
       ResourceLimits resourceLimits);
   
   /**
-   * Get the {@link ActiveUsersManager} for the queue.
-   * @return the <code>ActiveUsersManager</code> for the queue
+   * Get the {@link AbstractUsersManager} for the queue.
+   * @return the <code>AbstractUsersManager</code> for the queue
    */
-  public ActiveUsersManager getActiveUsersManager();
+  public AbstractUsersManager getAbstractUsersManager();
   
   /**
    * Adds all applications in the queue and its subqueues to the given collection.
@@ -333,13 +325,6 @@ public interface CSQueue extends SchedulerQueue<CSQueue> {
    *          new resource asked
    */
   public void decPendingResource(String nodeLabel, Resource resourceToDec);
-  
-  /**
-   * Decrease container resource in the queue
-   */
-  public void decreaseContainer(Resource clusterResource,
-      SchedContainerChangeRequest decreaseRequest,
-      FiCaSchedulerApp app) throws InvalidResourceRequestException;
 
   /**
    * Get valid Node Labels for this queue

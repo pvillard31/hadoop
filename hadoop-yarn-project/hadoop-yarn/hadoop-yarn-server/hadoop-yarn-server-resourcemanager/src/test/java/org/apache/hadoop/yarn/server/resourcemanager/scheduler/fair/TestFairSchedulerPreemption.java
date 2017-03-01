@@ -23,6 +23,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeUpdateSchedulerEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerImpl;
+import org.apache.hadoop.yarn.util.ControlledClock;
 import org.junit.After;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -49,10 +50,14 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
   private static final File ALLOC_FILE = new File(TEST_DIR, "test-queues");
   private static final int GB = 1024;
 
+  // Scheduler clock
+  private final ControlledClock clock = new ControlledClock();
+
   // Node Capacity = NODE_CAPACITY_MULTIPLE * (1 GB or 1 vcore)
   private static final int NODE_CAPACITY_MULTIPLE = 4;
 
   private final boolean fairsharePreemption;
+  private final boolean drf;
 
   // App that takes up the entire cluster
   private FSAppAttempt greedyApp;
@@ -60,25 +65,32 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
   // Starving app that is expected to instigate preemption
   private FSAppAttempt starvingApp;
 
-  @Parameterized.Parameters
-  public static Collection<Boolean[]> getParameters() {
-    return Arrays.asList(new Boolean[][] {
-        {true}, {false}});
+  @Parameterized.Parameters(name = "{0}")
+  public static Collection<Object[]> getParameters() {
+    return Arrays.asList(new Object[][] {
+        {"MinSharePreemption", 0},
+        {"MinSharePreemptionWithDRF", 1},
+        {"FairSharePreemption", 2},
+        {"FairSharePreemptionWithDRF", 3}
+    });
   }
 
-  public TestFairSchedulerPreemption(Boolean fairshare) throws IOException {
-    fairsharePreemption = fairshare;
+  public TestFairSchedulerPreemption(String name, int mode)
+      throws IOException {
+    fairsharePreemption = (mode > 1); // 2 and 3
+    drf = (mode % 2 == 1); // 1 and 3
     writeAllocFile();
   }
 
   @Before
-  public void setup() {
+  public void setup() throws IOException {
     createConfiguration();
     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE,
         ALLOC_FILE.getAbsolutePath());
     conf.setBoolean(FairSchedulerConfiguration.PREEMPTION, true);
     conf.setFloat(FairSchedulerConfiguration.PREEMPTION_THRESHOLD, 0f);
     conf.setInt(FairSchedulerConfiguration.WAIT_TIME_BEFORE_KILL, 0);
+    setupCluster();
   }
 
   @After
@@ -98,6 +110,7 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
      * |--- preemptable
      *      |--- child-1
      *      |--- child-2
+     * |--- preemptable-sibling
      * |--- nonpreemptible
      *      |--- child-1
      *      |--- child-2
@@ -121,6 +134,10 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
 
     out.println("</queue>"); // end of preemptable queue
 
+    out.println("<queue name=\"preemptable-sibling\">");
+    writePreemptionParams(out);
+    out.println("</queue>");
+
     // Queue with preemption disallowed
     out.println("<queue name=\"nonpreemptable\">");
     out.println("<allowPreemptionFrom>false" +
@@ -139,6 +156,10 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
 
     out.println("</queue>"); // end of nonpreemptable queue
 
+    if (drf) {
+      out.println("<defaultQueueSchedulingPolicy>drf" +
+          "</defaultQueueSchedulingPolicy>");
+    }
     out.println("</allocations>");
     out.close();
 
@@ -166,12 +187,18 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
 
   private void setupCluster() throws IOException {
     resourceManager = new MockRM(conf);
-    resourceManager.start();
     scheduler = (FairScheduler) resourceManager.getResourceScheduler();
+    scheduler.setClock(clock);
+    resourceManager.start();
 
-    // Create and add two nodes to the cluster
-    addNode(NODE_CAPACITY_MULTIPLE * GB, NODE_CAPACITY_MULTIPLE);
-    addNode(NODE_CAPACITY_MULTIPLE * GB, NODE_CAPACITY_MULTIPLE);
+    // Create and add two nodes to the cluster, with capacities
+    // disproportional to the container requests.
+    addNode(NODE_CAPACITY_MULTIPLE * GB, 3 * NODE_CAPACITY_MULTIPLE);
+    addNode(NODE_CAPACITY_MULTIPLE * GB, 3 * NODE_CAPACITY_MULTIPLE);
+
+    // Reinitialize the scheduler so DRF policy picks up cluster capacity
+    // TODO (YARN-6194): One shouldn't need to call this
+    scheduler.reinitialize(conf, resourceManager.getRMContext());
 
     // Verify if child-1 and child-2 are preemptable
     FSQueue child1 =
@@ -197,7 +224,7 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
    *
    * @param queueName queue name
    */
-  private void takeAllResource(String queueName) {
+  private void takeAllResources(String queueName) {
     // Create an app that takes up all the resources on the cluster
     ApplicationAttemptId appAttemptId
         = createSchedulingRequest(GB, 1, queueName, "default",
@@ -227,8 +254,8 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
         NODE_CAPACITY_MULTIPLE * rmNodes.size() / 2);
     starvingApp = scheduler.getSchedulerApp(appAttemptId);
 
-    // Sleep long enough to pass
-    Thread.sleep(10);
+    // Move clock enough to identify starvation
+    clock.tickSec(1);
     scheduler.update();
   }
 
@@ -243,32 +270,34 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
    */
   private void submitApps(String queue1, String queue2)
       throws InterruptedException {
-    takeAllResource(queue1);
+    takeAllResources(queue1);
     preemptHalfResources(queue2);
   }
 
-  private void verifyPreemption() throws InterruptedException {
-    // Sleep long enough for four containers to be preempted. Note that the
-    // starved app must be queued four times for containers to be preempted.
-    for (int i = 0; i < 10000; i++) {
-      if (greedyApp.getLiveContainers().size() == 4) {
+  private void verifyPreemption(int numStarvedAppContainers)
+      throws InterruptedException {
+    // Sleep long enough for four containers to be preempted.
+    for (int i = 0; i < 1000; i++) {
+      if (greedyApp.getLiveContainers().size() == 2 * numStarvedAppContainers) {
         break;
       }
       Thread.sleep(10);
     }
 
     // Verify the right amount of containers are preempted from greedyApp
-    assertEquals(4, greedyApp.getLiveContainers().size());
+    assertEquals("Incorrect number of containers on the greedy app",
+        2 * numStarvedAppContainers, greedyApp.getLiveContainers().size());
 
     sendEnoughNodeUpdatesToAssignFully();
 
     // Verify the preempted containers are assigned to starvingApp
-    assertEquals(2, starvingApp.getLiveContainers().size());
+    assertEquals("Starved app is not assigned the right number of containers",
+        numStarvedAppContainers, starvingApp.getLiveContainers().size());
   }
 
   private void verifyNoPreemption() throws InterruptedException {
     // Sleep long enough to ensure not even one container is preempted.
-    for (int i = 0; i < 600; i++) {
+    for (int i = 0; i < 100; i++) {
       if (greedyApp.getLiveContainers().size() != 8) {
         break;
       }
@@ -279,11 +308,10 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
 
   @Test
   public void testPreemptionWithinSameLeafQueue() throws Exception {
-    setupCluster();
     String queue = "root.preemptable.child-1";
     submitApps(queue, queue);
     if (fairsharePreemption) {
-      verifyPreemption();
+      verifyPreemption(2);
     } else {
       verifyNoPreemption();
     }
@@ -291,21 +319,18 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
 
   @Test
   public void testPreemptionBetweenTwoSiblingLeafQueues() throws Exception {
-    setupCluster();
     submitApps("root.preemptable.child-1", "root.preemptable.child-2");
-    verifyPreemption();
+    verifyPreemption(2);
   }
 
   @Test
   public void testPreemptionBetweenNonSiblingQueues() throws Exception {
-    setupCluster();
     submitApps("root.preemptable.child-1", "root.nonpreemptable.child-1");
-    verifyPreemption();
+    verifyPreemption(2);
   }
 
   @Test
   public void testNoPreemptionFromDisallowedQueue() throws Exception {
-    setupCluster();
     submitApps("root.nonpreemptable.child-1", "root.preemptable.child-1");
     verifyNoPreemption();
   }
@@ -331,13 +356,11 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
 
   @Test
   public void testPreemptionSelectNonAMContainer() throws Exception {
-    setupCluster();
-
-    takeAllResource("root.preemptable.child-1");
+    takeAllResources("root.preemptable.child-1");
     setNumAMContainersPerNode(2);
     preemptHalfResources("root.preemptable.child-2");
 
-    verifyPreemption();
+    verifyPreemption(2);
 
     ArrayList<RMContainer> containers =
         (ArrayList<RMContainer>) starvingApp.getLiveContainers();
@@ -347,5 +370,25 @@ public class TestFairSchedulerPreemption extends FairSchedulerTestBase {
     // the preemption happens on both nodes.
     assertTrue("Preempted containers should come from two different "
         + "nodes.", !host0.equals(host1));
+  }
+
+  @Test
+  public void testPreemptionBetweenSiblingQueuesWithParentAtFairShare()
+      throws InterruptedException {
+    // Run this test only for fairshare preemption
+    if (!fairsharePreemption) {
+      return;
+    }
+
+    // Let one of the child queues take over the entire cluster
+    takeAllResources("root.preemptable.child-1");
+
+    // Submit a job so half the resources go to parent's sibling
+    preemptHalfResources("root.preemptable-sibling");
+    verifyPreemption(2);
+
+    // Submit a job to the child's sibling to force preemption from the child
+    preemptHalfResources("root.preemptable.child-2");
+    verifyPreemption(1);
   }
 }

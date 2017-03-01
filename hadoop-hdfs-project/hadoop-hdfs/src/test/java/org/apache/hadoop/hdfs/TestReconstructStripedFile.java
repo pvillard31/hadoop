@@ -100,14 +100,15 @@ public class TestReconstructStripedFile {
         false);
     if (ErasureCodeNative.isNativeCodeLoaded()) {
       conf.set(
-          CodecUtil.IO_ERASURECODE_CODEC_RS_DEFAULT_RAWCODER_KEY,
+          CodecUtil.IO_ERASURECODE_CODEC_RS_RAWCODER_KEY,
           NativeRSRawErasureCoderFactory.class.getCanonicalName());
     }
     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(dnNum).build();
     cluster.waitActive();
 
     fs = cluster.getFileSystem();
-    fs.getClient().setErasureCodingPolicy("/", null);
+    fs.getClient().setErasureCodingPolicy("/",
+        ErasureCodingPolicyManager.getSystemDefaultPolicy().getName());
 
     List<DataNode> datanodes = cluster.getDataNodes();
     for (int i = 0; i < dnNum; i++) {

@@ -503,6 +503,15 @@
 </property>
 
 <property>
+  <name>dfs.block.access.token.protobuf.enable</name>
+  <value>false</value>
+  <description>
+    If "true", block tokens are written using Protocol Buffers.
+    If "false", block tokens are written using Legacy format.
+  </description>
+</property>
+
+<property>
   <name>dfs.datanode.data.dir</name>
   <value>file://${hadoop.tmp.dir}/dfs/data</value>
   <description>Determines where on the local filesystem an DFS data node
@@ -1266,6 +1275,26 @@
         Chunksize in bytes to upload the checkpoint.
         Chunked streaming is used to avoid internal buffering of contents
         of image file of huge size.
+  </description>
+</property>
+
+<property>
+  <name>dfs.edit.log.transfer.timeout</name>
+  <value>30000</value>
+  <description>
+    Socket timeout for edit log transfer in milliseconds. This timeout
+    should be configured such that normal edit log transfer for journal
+    node syncing can complete successfully.
+  </description>
+</property>
+
+<property>
+  <name>dfs.edit.log.transfer.bandwidthPerSec</name>
+  <value>0</value>
+  <description>
+    Maximum bandwidth used for transferring edit log to between journal nodes
+    for syncing, in bytes per second.
+    A default value of 0 indicates that throttling is disabled.
   </description>
 </property>
 
@@ -2449,6 +2478,14 @@
 </property>
 
 <property>
+  <name>dfs.webhdfs.acl.provider.permission.pattern</name>
+  <value>^(default:)?(user|group|mask|other):[[A-Za-z_][A-Za-z0-9._-]]*:([rwx-]{3})?(,(default:)?(user|group|mask|other):[[A-Za-z_][A-Za-z0-9._-]]*:([rwx-]{3})?)*$</value>
+  <description>
+    Valid pattern for user and group names in webhdfs acl operations, it must be a valid java regex.
+  </description>
+</property>
+
+<property>
   <name>dfs.webhdfs.socket.connect-timeout</name>
   <value>60s</value>
   <description>
@@ -2683,7 +2720,7 @@
 
 <property>
   <name>dfs.namenode.write-lock-reporting-threshold-ms</name>
-  <value>1000</value>
+  <value>5000</value>
   <description>When a write lock is held on the namenode for a long time,
     this will be logged as the lock is released. This sets how long the
     lock must be held for logging to occur.
@@ -3776,6 +3813,27 @@
 </property>
 
 <property>
+  <name>dfs.journalnode.enable.sync</name>
+  <value>true</value>
+  <description>
+    If true, the journal nodes wil sync with each other. The journal nodes
+    will periodically gossip with other journal nodes to compare edit log
+    manifests and if they detect any missing log segment, they will download
+    it from the other journal nodes.
+  </description>
+</property>
+
+<property>
+  <name>dfs.journalnode.sync.interval</name>
+  <value>120000</value>
+  <description>
+    Time interval, in milliseconds, between two Journal Node syncs.
+    This configuration takes effect only if the journalnode sync is enabled
+    by setting the configuration parameter dfs.journalnode.enable.sync to true.
+  </description>
+</property>
+
+<property>
   <name>dfs.journalnode.kerberos.internal.spnego.principal</name>
   <value></value>
   <description>
@@ -4036,7 +4094,7 @@
 
 <property>
   <name>dfs.namenode.reconstruction.pending.timeout-sec</name>
-  <value>-1</value>
+  <value>300</value>
   <description>
     Timeout in seconds for block reconstruction.  If this value is 0 or less,
     then it will default to 5 minutes.

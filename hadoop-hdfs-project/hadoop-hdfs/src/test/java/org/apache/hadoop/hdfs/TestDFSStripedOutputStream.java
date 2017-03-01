@@ -85,11 +85,12 @@ public class TestDFSStripedOutputStream {
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_REPLICATION_MAX_STREAMS_KEY, 0);
     if (ErasureCodeNative.isNativeCodeLoaded()) {
       conf.set(
-          CodecUtil.IO_ERASURECODE_CODEC_RS_DEFAULT_RAWCODER_KEY,
+          CodecUtil.IO_ERASURECODE_CODEC_RS_RAWCODER_KEY,
           NativeRSRawErasureCoderFactory.class.getCanonicalName());
     }
     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(numDNs).build();
-    cluster.getFileSystem().getClient().setErasureCodingPolicy("/", ecPolicy);
+    cluster.getFileSystem().getClient().setErasureCodingPolicy("/", ecPolicy
+        .getName());
     fs = cluster.getFileSystem();
   }
 

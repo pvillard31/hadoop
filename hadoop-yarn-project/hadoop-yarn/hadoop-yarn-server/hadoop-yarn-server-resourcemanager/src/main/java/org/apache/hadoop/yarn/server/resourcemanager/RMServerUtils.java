@@ -60,6 +60,7 @@ import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.factories.RecordFactory;
 import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 import org.apache.hadoop.yarn.security.YarnAuthorizationProvider;
+import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt
     .RMAppAttemptState;
@@ -151,26 +152,16 @@ public class RMServerUtils {
       if (msg == null) {
         if ((updateType != ContainerUpdateType.PROMOTE_EXECUTION_TYPE) &&
             (updateType !=ContainerUpdateType.DEMOTE_EXECUTION_TYPE)) {
-          Resource original = rmContainer.getContainer().getResource();
-          Resource target = updateReq.getCapability();
-          if (Resources.fitsIn(target, original)) {
-            // This is a decrease request
-            if (validateIncreaseDecreaseRequest(rmContext, updateReq,
-                maximumAllocation, false)) {
-              updateRequests.getDecreaseRequests().add(updateReq);
-              outstandingUpdate.add(updateReq.getContainerId());
-            } else {
-              msg = RESOURCE_OUTSIDE_ALLOWED_RANGE;
-            }
-          } else {
-            // This is an increase request
-            if (validateIncreaseDecreaseRequest(rmContext, updateReq,
-                maximumAllocation, true)) {
+          if (validateIncreaseDecreaseRequest(
+              rmContext, updateReq, maximumAllocation)) {
+            if (ContainerUpdateType.INCREASE_RESOURCE == updateType) {
               updateRequests.getIncreaseRequests().add(updateReq);
-              outstandingUpdate.add(updateReq.getContainerId());
             } else {
-              msg = RESOURCE_OUTSIDE_ALLOWED_RANGE;
+              updateRequests.getDecreaseRequests().add(updateReq);
             }
+            outstandingUpdate.add(updateReq.getContainerId());
+          } else {
+            msg = RESOURCE_OUTSIDE_ALLOWED_RANGE;
           }
         } else {
           ExecutionType original = rmContainer.getExecutionType();
@@ -188,19 +179,25 @@ public class RMServerUtils {
           }
         }
       }
-      checkAndcreateUpdateError(updateErrors, updateReq, msg);
+      checkAndcreateUpdateError(updateErrors, updateReq, rmContainer, msg);
     }
     return updateRequests;
   }
 
   private static void checkAndcreateUpdateError(
       List<UpdateContainerError> errors, UpdateContainerRequest updateReq,
-      String msg) {
+      RMContainer rmContainer, String msg) {
     if (msg != null) {
       UpdateContainerError updateError = RECORD_FACTORY
           .newRecordInstance(UpdateContainerError.class);
       updateError.setReason(msg);
       updateError.setUpdateContainerRequest(updateReq);
+      if (rmContainer != null) {
+        updateError.setCurrentContainerVersion(
+            rmContainer.getContainer().getVersion());
+      } else {
+        updateError.setCurrentContainerVersion(-1);
+      }
       errors.add(updateError);
     }
   }
@@ -216,9 +213,7 @@ public class RMServerUtils {
     // version
     if (msg == null && updateReq.getContainerVersion() !=
         rmContainer.getContainer().getVersion()) {
-      msg = INCORRECT_CONTAINER_VERSION_ERROR + "|"
-          + updateReq.getContainerVersion() + "|"
-          + rmContainer.getContainer().getVersion();
+      msg = INCORRECT_CONTAINER_VERSION_ERROR;
     }
     // No more than 1 container update per request.
     if (msg == null &&
@@ -324,8 +319,7 @@ public class RMServerUtils {
 
   // Sanity check and normalize target resource
   private static boolean validateIncreaseDecreaseRequest(RMContext rmContext,
-      UpdateContainerRequest request, Resource maximumAllocation,
-      boolean increase) {
+      UpdateContainerRequest request, Resource maximumAllocation) {
     if (request.getCapability().getMemorySize() < 0
         || request.getCapability().getMemorySize() > maximumAllocation
         .getMemorySize()) {
@@ -556,5 +550,26 @@ public class RMServerUtils {
       }
     }
     return newApplicationTimeout;
+  }
+
+  /**
+   * Get applicable Node count for AM.
+   *
+   * @param rmContext context
+   * @param conf configuration
+   * @param amreq am resource request
+   * @return applicable node count
+   */
+  public static int getApplicableNodeCountForAM(RMContext rmContext,
+      Configuration conf, ResourceRequest amreq) {
+    if (YarnConfiguration.areNodeLabelsEnabled(conf)) {
+      RMNodeLabelsManager labelManager = rmContext.getNodeLabelManager();
+      String amNodeLabelExpression = amreq.getNodeLabelExpression();
+      amNodeLabelExpression = (amNodeLabelExpression == null
+          || amNodeLabelExpression.trim().isEmpty())
+              ? RMNodeLabelsManager.NO_LABEL : amNodeLabelExpression;
+      return labelManager.getActiveNMCountPerLabel(amNodeLabelExpression);
+    }
+    return rmContext.getScheduler().getNumClusterNodes();
   }
 }

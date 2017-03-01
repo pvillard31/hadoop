@@ -177,7 +177,7 @@ public class FifoScheduler extends
     }
     
     @Override
-    public ActiveUsersManager getActiveUsersManager() {
+    public ActiveUsersManager getAbstractUsersManager() {
       return activeUsersManager;
     }
 
@@ -934,14 +934,6 @@ public class FifoScheduler extends
 
   public Resource getUsedResource() {
     return usedResource;
-  }
-
-  @Override
-  protected void decreaseContainer(
-      SchedContainerChangeRequest decreaseRequest,
-      SchedulerApplicationAttempt attempt) {
-    // TODO Auto-generated method stub
-    
   }
 
   @Override

@@ -938,7 +938,7 @@ public interface ClientProtocol {
 
   /**
    * Tell all datanodes to use a new, non-persistent bandwidth value for
-   * dfs.balance.bandwidthPerSec.
+   * dfs.datanode.balance.bandwidthPerSec.
    *
    * @param bandwidth Blanacer bandwidth in bytes per second for this datanode.
    * @throws IOException
@@ -1510,11 +1510,10 @@ public interface ClientProtocol {
   /**
    * Set an erasure coding policy on a specified path.
    * @param src The path to set policy on.
-   * @param ecPolicy The erasure coding policy. If null, default policy will
-   *                 be used
+   * @param ecPolicyName The erasure coding policy name.
    */
   @AtMostOnce
-  void setErasureCodingPolicy(String src, ErasureCodingPolicy ecPolicy)
+  void setErasureCodingPolicy(String src, String ecPolicyName)
       throws IOException;
 
   /**

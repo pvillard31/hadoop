@@ -73,7 +73,7 @@ public class AppSchedulingInfo {
   private final String user;
 
   private Queue queue;
-  private ActiveUsersManager activeUsersManager;
+  private AbstractUsersManager abstractUsersManager;
   // whether accepted/allocated by scheduler
   private volatile boolean pending = true;
   private ResourceUsage appResourceUsage;
@@ -90,22 +90,20 @@ public class AppSchedulingInfo {
       schedulerKeys = new ConcurrentSkipListMap<>();
   final Map<SchedulerRequestKey, SchedulingPlacementSet<SchedulerNode>>
       schedulerKeyToPlacementSets = new ConcurrentHashMap<>();
-  final Map<NodeId, Map<SchedulerRequestKey, Map<ContainerId,
-      SchedContainerChangeRequest>>> containerIncreaseRequestMap =
-      new ConcurrentHashMap<>();
+
   private final ReentrantReadWriteLock.ReadLock readLock;
   private final ReentrantReadWriteLock.WriteLock writeLock;
 
   public final ContainerUpdateContext updateContext;
 
   public AppSchedulingInfo(ApplicationAttemptId appAttemptId,
-      String user, Queue queue, ActiveUsersManager activeUsersManager,
+      String user, Queue queue, AbstractUsersManager abstractUsersManager,
       long epoch, ResourceUsage appResourceUsage) {
     this.applicationAttemptId = appAttemptId;
     this.applicationId = appAttemptId.getApplicationId();
     this.queue = queue;
     this.user = user;
-    this.activeUsersManager = activeUsersManager;
+    this.abstractUsersManager = abstractUsersManager;
     this.containerIdCounter = new AtomicLong(
         epoch << ResourceManager.EPOCH_BIT_SHIFT);
     this.appResourceUsage = appResourceUsage;
@@ -158,137 +156,6 @@ public class AppSchedulingInfo {
     LOG.info("Application " + applicationId + " requests cleared");
   }
 
-  public boolean hasIncreaseRequest(NodeId nodeId) {
-    try {
-      this.readLock.lock();
-      Map<SchedulerRequestKey, Map<ContainerId, SchedContainerChangeRequest>>
-          requestsOnNode = containerIncreaseRequestMap.get(nodeId);
-      return requestsOnNode == null ? false : requestsOnNode.size() > 0;
-    } finally {
-      this.readLock.unlock();
-    }
-  }
-
-  public Map<ContainerId, SchedContainerChangeRequest>
-      getIncreaseRequests(NodeId nodeId, SchedulerRequestKey schedulerKey) {
-    try {
-      this.readLock.lock();
-      Map<SchedulerRequestKey, Map<ContainerId, SchedContainerChangeRequest>>
-          requestsOnNode = containerIncreaseRequestMap.get(nodeId);
-      return requestsOnNode == null ? null : requestsOnNode.get(
-          schedulerKey);
-    } finally {
-      this.readLock.unlock();
-    }
-  }
-
-  /**
-   * return true if any of the existing increase requests are updated,
-   *        false if none of them are updated
-   */
-  public boolean updateIncreaseRequests(
-      List<SchedContainerChangeRequest> increaseRequests) {
-    boolean resourceUpdated = false;
-
-    try {
-      this.writeLock.lock();
-      for (SchedContainerChangeRequest r : increaseRequests) {
-        if (r.getRMContainer().getState() != RMContainerState.RUNNING) {
-          LOG.warn("rmContainer's state is not RUNNING, for increase request"
-              + " with container-id=" + r.getContainerId());
-          continue;
-        }
-        try {
-          RMServerUtils.checkSchedContainerChangeRequest(r, true);
-        } catch (YarnException e) {
-          LOG.warn("Error happens when checking increase request, Ignoring.."
-              + " exception=", e);
-          continue;
-        }
-        NodeId nodeId = r.getRMContainer().getAllocatedNode();
-
-        Map<SchedulerRequestKey, Map<ContainerId, SchedContainerChangeRequest>>
-            requestsOnNode = containerIncreaseRequestMap.get(nodeId);
-        if (null == requestsOnNode) {
-          requestsOnNode = new TreeMap<>();
-          containerIncreaseRequestMap.put(nodeId, requestsOnNode);
-        }
-
-        SchedContainerChangeRequest prevChangeRequest =
-            getIncreaseRequest(nodeId,
-                r.getRMContainer().getAllocatedSchedulerKey(),
-                r.getContainerId());
-        if (null != prevChangeRequest) {
-          if (Resources.equals(prevChangeRequest.getTargetCapacity(),
-              r.getTargetCapacity())) {
-            // increase request hasn't changed
-            continue;
-          }
-
-          // remove the old one, as we will use the new one going forward
-          removeIncreaseRequest(nodeId,
-              prevChangeRequest.getRMContainer().getAllocatedSchedulerKey(),
-              prevChangeRequest.getContainerId());
-        }
-
-        if (Resources.equals(r.getTargetCapacity(),
-            r.getRMContainer().getAllocatedResource())) {
-          if (LOG.isDebugEnabled()) {
-            LOG.debug("Trying to increase container " + r.getContainerId()
-                + ", target capacity = previous capacity = " + prevChangeRequest
-                + ". Will ignore this increase request.");
-          }
-          continue;
-        }
-
-        // add the new one
-        resourceUpdated = true;
-        insertIncreaseRequest(r);
-      }
-      return resourceUpdated;
-    } finally {
-      this.writeLock.unlock();
-    }
-  }
-
-  /**
-   * Insert increase request, adding any missing items in the data-structure
-   * hierarchy.
-   */
-  private void insertIncreaseRequest(SchedContainerChangeRequest request) {
-    NodeId nodeId = request.getNodeId();
-    SchedulerRequestKey schedulerKey =
-        request.getRMContainer().getAllocatedSchedulerKey();
-    ContainerId containerId = request.getContainerId();
-    
-    Map<SchedulerRequestKey, Map<ContainerId, SchedContainerChangeRequest>>
-        requestsOnNode = containerIncreaseRequestMap.get(nodeId);
-    if (null == requestsOnNode) {
-      requestsOnNode = new HashMap<>();
-      containerIncreaseRequestMap.put(nodeId, requestsOnNode);
-    }
-
-    Map<ContainerId, SchedContainerChangeRequest> requestsOnNodeWithPriority =
-        requestsOnNode.get(schedulerKey);
-    if (null == requestsOnNodeWithPriority) {
-      requestsOnNodeWithPriority = new TreeMap<>();
-      requestsOnNode.put(schedulerKey, requestsOnNodeWithPriority);
-      incrementSchedulerKeyReference(schedulerKey);
-    }
-
-    requestsOnNodeWithPriority.put(containerId, request);
-
-    // update resources
-    String partition = request.getRMContainer().getNodeLabelExpression();
-    Resource delta = request.getDeltaCapacity();
-    appResourceUsage.incPending(partition, delta);
-    queue.incPendingResource(partition, delta);
-    
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Added increase request:" + request.getContainerId()
-          + " delta=" + delta);
-    }
-  }
 
   private void incrementSchedulerKeyReference(
       SchedulerRequestKey schedulerKey) {
@@ -309,73 +176,6 @@ public class AppSchedulingInfo {
       } else {
         schedulerKeys.remove(schedulerKey);
       }
-    }
-  }
-
-  public boolean removeIncreaseRequest(NodeId nodeId,
-      SchedulerRequestKey schedulerKey, ContainerId containerId) {
-    try {
-      this.writeLock.lock();
-      Map<SchedulerRequestKey, Map<ContainerId, SchedContainerChangeRequest>>
-          requestsOnNode = containerIncreaseRequestMap.get(nodeId);
-      if (null == requestsOnNode) {
-        return false;
-      }
-
-      Map<ContainerId, SchedContainerChangeRequest> requestsOnNodeWithPriority =
-          requestsOnNode.get(schedulerKey);
-      if (null == requestsOnNodeWithPriority) {
-        return false;
-      }
-
-      SchedContainerChangeRequest request =
-          requestsOnNodeWithPriority.remove(containerId);
-    
-      // remove hierarchies if it becomes empty
-      if (requestsOnNodeWithPriority.isEmpty()) {
-        requestsOnNode.remove(schedulerKey);
-        decrementSchedulerKeyReference(schedulerKey);
-      }
-      if (requestsOnNode.isEmpty()) {
-        containerIncreaseRequestMap.remove(nodeId);
-      }
-
-      if (request == null) {
-        return false;
-      }
-
-      // update queue's pending resource if request exists
-      String partition = request.getRMContainer().getNodeLabelExpression();
-      Resource delta = request.getDeltaCapacity();
-      appResourceUsage.decPending(partition, delta);
-      queue.decPendingResource(partition, delta);
-
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("remove increase request:" + request);
-      }
-
-      return true;
-    } finally {
-      this.writeLock.unlock();
-    }
-  }
-  
-  public SchedContainerChangeRequest getIncreaseRequest(NodeId nodeId,
-      SchedulerRequestKey schedulerKey, ContainerId containerId) {
-    try {
-      this.readLock.lock();
-      Map<SchedulerRequestKey, Map<ContainerId, SchedContainerChangeRequest>>
-          requestsOnNode = containerIncreaseRequestMap.get(nodeId);
-      if (null == requestsOnNode) {
-        return null;
-      }
-
-      Map<ContainerId, SchedContainerChangeRequest> requestsOnNodeWithPriority =
-          requestsOnNode.get(schedulerKey);
-      return requestsOnNodeWithPriority == null ? null
-          : requestsOnNodeWithPriority.get(containerId);
-    } finally {
-      this.readLock.unlock();
     }
   }
 
@@ -477,7 +277,7 @@ public class AppSchedulingInfo {
       // Activate application. Metrics activation is done here.
       if (lastRequestContainers <= 0) {
         incrementSchedulerKeyReference(schedulerKey);
-        activeUsersManager.activateApplication(user, applicationId);
+        abstractUsersManager.activateApplication(user, applicationId);
       }
     }
 
@@ -512,21 +312,6 @@ public class AppSchedulingInfo {
   public void decPendingResource(String partition, Resource toDecrease) {
     queue.decPendingResource(partition, toDecrease);
     appResourceUsage.decPending(partition, toDecrease);
-  }
-
-  private boolean hasRequestLabelChanged(ResourceRequest requestOne,
-      ResourceRequest requestTwo) {
-    String requestOneLabelExp = requestOne.getNodeLabelExpression();
-    String requestTwoLabelExp = requestTwo.getNodeLabelExpression();
-    // First request label expression can be null and second request
-    // is not null then we have to consider it as changed.
-    if ((null == requestOneLabelExp) && (null != requestTwoLabelExp)) {
-      return true;
-    }
-    // If the label is not matching between both request when
-    // requestOneLabelExp is not null.
-    return ((null != requestOneLabelExp) && !(requestOneLabelExp
-        .equals(requestTwoLabelExp)));
   }
 
   /**
@@ -601,22 +386,6 @@ public class AppSchedulingInfo {
     return ret;
   }
 
-  public SchedulingPlacementSet getFirstSchedulingPlacementSet() {
-    try {
-      readLock.lock();
-      for (SchedulerRequestKey key : schedulerKeys.keySet()) {
-        SchedulingPlacementSet ps = schedulerKeyToPlacementSets.get(key);
-        if (null != ps) {
-          return ps;
-        }
-      }
-      return null;
-    } finally {
-      readLock.unlock();
-    }
-
-  }
-
   public PendingAsk getNextPendingAsk() {
     try {
       readLock.lock();
@@ -666,56 +435,6 @@ public class AppSchedulingInfo {
     }
   }
 
-  public void increaseContainer(SchedContainerChangeRequest increaseRequest) {
-    NodeId nodeId = increaseRequest.getNodeId();
-    SchedulerRequestKey schedulerKey =
-        increaseRequest.getRMContainer().getAllocatedSchedulerKey();
-    ContainerId containerId = increaseRequest.getContainerId();
-    Resource deltaCapacity = increaseRequest.getDeltaCapacity();
-
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("allocated increase request : applicationId=" + applicationId
-          + " container=" + containerId + " host="
-          + increaseRequest.getNodeId() + " user=" + user + " resource="
-          + deltaCapacity);
-    }
-    try {
-      this.writeLock.lock();
-      // Set queue metrics
-      queue.getMetrics().allocateResources(user, deltaCapacity);
-      // remove the increase request from pending increase request map
-      removeIncreaseRequest(nodeId, schedulerKey, containerId);
-      // update usage
-      appResourceUsage.incUsed(increaseRequest.getNodePartition(),
-          deltaCapacity);
-    } finally {
-      this.writeLock.unlock();
-    }
-  }
-  
-  public void decreaseContainer(SchedContainerChangeRequest decreaseRequest) {
-    // Delta is negative when it's a decrease request
-    Resource absDelta = Resources.negate(decreaseRequest.getDeltaCapacity());
-
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Decrease container : applicationId=" + applicationId
-          + " container=" + decreaseRequest.getContainerId() + " host="
-          + decreaseRequest.getNodeId() + " user=" + user + " resource="
-          + absDelta);
-    }
-
-    try {
-      this.writeLock.lock();
-      // Set queue metrics
-      queue.getMetrics().releaseResources(user, absDelta);
-
-      // update usage
-      appResourceUsage.decUsed(decreaseRequest.getNodePartition(), absDelta);
-    } finally {
-      this.writeLock.unlock();
-    }
-  }
-
   public List<ResourceRequest> allocate(NodeType type,
       SchedulerNode node, SchedulerRequestKey schedulerKey,
       Container containerAllocated) {
@@ -735,7 +454,7 @@ public class AppSchedulingInfo {
 
   public void checkForDeactivation() {
     if (schedulerKeys.isEmpty()) {
-      activeUsersManager.deactivateApplication(user, applicationId);
+      abstractUsersManager.deactivateApplication(user, applicationId);
     }
   }
   
@@ -763,9 +482,9 @@ public class AppSchedulingInfo {
       }
       oldMetrics.moveAppFrom(this);
       newMetrics.moveAppTo(this);
-      activeUsersManager.deactivateApplication(user, applicationId);
-      activeUsersManager = newQueue.getActiveUsersManager();
-      activeUsersManager.activateApplication(user, applicationId);
+      abstractUsersManager.deactivateApplication(user, applicationId);
+      abstractUsersManager = newQueue.getAbstractUsersManager();
+      abstractUsersManager.activateApplication(user, applicationId);
       this.queue = newQueue;
     } finally {
       this.writeLock.unlock();

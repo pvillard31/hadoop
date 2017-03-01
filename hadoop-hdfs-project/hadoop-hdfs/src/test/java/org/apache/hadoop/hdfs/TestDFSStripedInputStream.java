@@ -96,7 +96,7 @@ public class TestDFSStripedInputStream {
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_REPLICATION_MAX_STREAMS_KEY, 0);
     if (ErasureCodeNative.isNativeCodeLoaded()) {
       conf.set(
-          CodecUtil.IO_ERASURECODE_CODEC_RS_DEFAULT_RAWCODER_KEY,
+          CodecUtil.IO_ERASURECODE_CODEC_RS_RAWCODER_KEY,
           NativeRSRawErasureCoderFactory.class.getCanonicalName());
     }
     SimulatedFSDataset.setFactory(conf);
@@ -108,7 +108,8 @@ public class TestDFSStripedInputStream {
     }
     fs = cluster.getFileSystem();
     fs.mkdirs(dirPath);
-    fs.getClient().setErasureCodingPolicy(dirPath.toString(), ecPolicy);
+    fs.getClient()
+        .setErasureCodingPolicy(dirPath.toString(), ecPolicy.getName());
   }
 
   @After

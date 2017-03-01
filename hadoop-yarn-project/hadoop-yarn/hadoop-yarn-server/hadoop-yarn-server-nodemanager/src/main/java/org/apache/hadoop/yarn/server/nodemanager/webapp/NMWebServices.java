@@ -50,11 +50,12 @@ import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.http.JettyUtils;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.factories.RecordFactory;
 import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 import org.apache.hadoop.yarn.logaggregation.ContainerLogMeta;
-import org.apache.hadoop.yarn.logaggregation.ContainerLogType;
+import org.apache.hadoop.yarn.logaggregation.ContainerLogAggregationType;
 import org.apache.hadoop.yarn.logaggregation.LogToolUtils;
 import org.apache.hadoop.yarn.server.nodemanager.Context;
 import org.apache.hadoop.yarn.server.nodemanager.ResourceView;
@@ -68,6 +69,7 @@ import org.apache.hadoop.yarn.server.nodemanager.webapp.dao.ContainerInfo;
 import org.apache.hadoop.yarn.server.nodemanager.webapp.dao.NMContainerLogsInfo;
 import org.apache.hadoop.yarn.server.nodemanager.webapp.dao.ContainersInfo;
 import org.apache.hadoop.yarn.server.nodemanager.webapp.dao.NodeInfo;
+import org.apache.hadoop.yarn.server.webapp.YarnWebServiceParams;
 import org.apache.hadoop.yarn.server.webapp.dao.ContainerLogsInfo;
 import org.apache.hadoop.yarn.util.Times;
 import org.apache.hadoop.yarn.webapp.BadRequestException;
@@ -86,6 +88,7 @@ public class NMWebServices {
   private WebApp webapp;
   private static RecordFactory recordFactory = RecordFactoryProvider
       .getRecordFactory(null);
+  private final String redirectWSUrl;
 
   private @javax.ws.rs.core.Context 
     HttpServletRequest request;
@@ -102,6 +105,8 @@ public class NMWebServices {
     this.nmContext = nm;
     this.rview = view;
     this.webapp = webapp;
+    this.redirectWSUrl = this.nmContext.getConf().get(
+        YarnConfiguration.YARN_LOG_SERVER_WEBSERVICE_URL);
   }
 
   private void init() {
@@ -235,7 +240,7 @@ public class NMWebServices {
   public Response getContainerLogsInfo(
       @javax.ws.rs.core.Context HttpServletRequest hsr,
       @javax.ws.rs.core.Context HttpServletResponse res,
-      @PathParam("containerid") String containerIdStr) {
+      @PathParam(YarnWebServiceParams.CONTAINER_ID) String containerIdStr) {
     ContainerId containerId = null;
     init();
     try {
@@ -248,7 +253,7 @@ public class NMWebServices {
       List<ContainerLogsInfo> containersLogsInfo = new ArrayList<>();
       containersLogsInfo.add(new NMContainerLogsInfo(
           this.nmContext, containerId,
-          hsr.getRemoteUser(), ContainerLogType.LOCAL));
+          hsr.getRemoteUser(), ContainerLogAggregationType.LOCAL));
       // check whether we have aggregated logs in RemoteFS. If exists, show the
       // the log meta for the aggregated logs as well.
       ApplicationId appId = containerId.getApplicationAttemptId()
@@ -263,12 +268,15 @@ public class NMWebServices {
         if (!containerLogMeta.isEmpty()) {
           for (ContainerLogMeta logMeta : containerLogMeta) {
             containersLogsInfo.add(new ContainerLogsInfo(logMeta,
-                ContainerLogType.AGGREGATED));
+                ContainerLogAggregationType.AGGREGATED));
           }
         }
       } catch (IOException ex) {
         // Something wrong with we tries to access the remote fs for the logs.
         // Skip it and do nothing
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(ex.getMessage());
+        }
       }
       GenericEntity<List<ContainerLogsInfo>> meta = new GenericEntity<List<
           ContainerLogsInfo>>(containersLogsInfo){};
@@ -279,7 +287,13 @@ public class NMWebServices {
       resp.header("X-Content-Type-Options", "nosniff");
       return resp.build();
     } catch (Exception ex) {
-      throw new WebApplicationException(ex);
+      if (redirectWSUrl == null || redirectWSUrl.isEmpty()) {
+        throw new WebApplicationException(ex);
+      }
+      // redirect the request to the configured log server
+      String redirectURI = "/containers/" + containerIdStr
+          + "/logs";
+      return createRedirectResponse(hsr, redirectWSUrl, redirectURI);
     }
   }
 
@@ -307,10 +321,14 @@ public class NMWebServices {
   @Public
   @Unstable
   public Response getContainerLogFile(
-      @PathParam("containerid") String containerIdStr,
-      @PathParam("filename") String filename,
-      @QueryParam("format") String format,
-      @QueryParam("size") String size) {
+      @PathParam(YarnWebServiceParams.CONTAINER_ID)
+      final String containerIdStr,
+      @PathParam(YarnWebServiceParams.CONTAINER_LOG_FILE_NAME)
+      String filename,
+      @QueryParam(YarnWebServiceParams.RESPONSE_CONTENT_FORMAT)
+      String format,
+      @QueryParam(YarnWebServiceParams.RESPONSE_CONTENT_SIZE)
+      String size) {
     return getLogs(containerIdStr, filename, format, size);
   }
 
@@ -338,10 +356,14 @@ public class NMWebServices {
   @Public
   @Unstable
   public Response getLogs(
-      @PathParam("containerid") final String containerIdStr,
-      @PathParam("filename") String filename,
-      @QueryParam("format") String format,
-      @QueryParam("size") String size) {
+      @PathParam(YarnWebServiceParams.CONTAINER_ID)
+      final String containerIdStr,
+      @PathParam(YarnWebServiceParams.CONTAINER_LOG_FILE_NAME)
+      String filename,
+      @QueryParam(YarnWebServiceParams.RESPONSE_CONTENT_FORMAT)
+      String format,
+      @QueryParam(YarnWebServiceParams.RESPONSE_CONTENT_SIZE)
+      String size) {
     ContainerId tempContainerId;
     try {
       tempContainerId = ContainerId.fromString(containerIdStr);
@@ -368,7 +390,14 @@ public class NMWebServices {
       logFile = ContainerLogsUtils.getContainerLogFile(
           containerId, filename, request.getRemoteUser(), nmContext);
     } catch (NotFoundException ex) {
-      return Response.status(Status.NOT_FOUND).entity(ex.getMessage()).build();
+      if (redirectWSUrl == null || redirectWSUrl.isEmpty()) {
+        return Response.status(Status.NOT_FOUND).entity(ex.getMessage())
+            .build();
+      }
+      // redirect the request to the configured log server
+      String redirectURI = "/containers/" + containerIdStr
+          + "/logs/" + filename;
+      return createRedirectResponse(request, redirectWSUrl, redirectURI);
     } catch (YarnException ex) {
       return Response.serverError().entity(ex.getMessage()).build();
     }
@@ -400,9 +429,10 @@ public class NMWebServices {
             byte[] buf = new byte[bufferSize];
             LogToolUtils.outputContainerLog(containerId.toString(),
                 nmContext.getNodeId().toString(), outputFileName, fileLength,
-                bytes, lastModifiedTime, fis, os, buf, ContainerLogType.LOCAL);
+                bytes, lastModifiedTime, fis, os, buf,
+                ContainerLogAggregationType.LOCAL);
             StringBuilder sb = new StringBuilder();
-            String endOfFile = "End of LogFile:" + outputFileName;
+            String endOfFile = "End of LogType:" + outputFileName;
             sb.append(endOfFile + ".");
             if (isRunning) {
               sb.append("This log file belongs to a running container ("
@@ -454,5 +484,26 @@ public class NMWebServices {
       return Long.MAX_VALUE;
     }
     return Long.parseLong(bytes);
+  }
+
+  private Response createRedirectResponse(HttpServletRequest httpRequest,
+      String redirectWSUrlPrefix, String uri) {
+    // redirect the request to the configured log server
+    StringBuilder redirectPath = new StringBuilder();
+    if (redirectWSUrlPrefix.endsWith("/")) {
+      redirectWSUrlPrefix = redirectWSUrlPrefix.substring(0,
+          redirectWSUrlPrefix.length() - 1);
+    }
+    redirectPath.append(redirectWSUrlPrefix + uri);
+    // append all the request query parameters except nodeId parameter
+    String requestParams = WebAppUtils.removeQueryParams(httpRequest,
+        YarnWebServiceParams.NM_ID);
+    if (requestParams != null && !requestParams.isEmpty()) {
+      redirectPath.append("?" + requestParams);
+    }
+    ResponseBuilder res = Response.status(
+        HttpServletResponse.SC_TEMPORARY_REDIRECT);
+    res.header("Location", redirectPath.toString());
+    return res.build();
   }
 }

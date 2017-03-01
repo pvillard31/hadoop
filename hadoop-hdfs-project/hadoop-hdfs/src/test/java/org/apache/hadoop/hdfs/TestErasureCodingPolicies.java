@@ -28,6 +28,7 @@ import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
 import org.apache.hadoop.hdfs.server.namenode.INode;
 import org.apache.hadoop.hdfs.client.HdfsAdmin;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
+import org.apache.hadoop.hdfs.server.namenode.INodeFile;
 import org.apache.hadoop.io.erasurecode.ECSchema;
 import org.junit.After;
 import org.junit.Before;
@@ -46,6 +47,8 @@ public class TestErasureCodingPolicies {
   private MiniDFSCluster cluster;
   private DistributedFileSystem fs;
   private static final int BLOCK_SIZE = 1024;
+  private static final ErasureCodingPolicy EC_POLICY =
+      ErasureCodingPolicyManager.getSystemDefaultPolicy();
   private FSNamesystem namesystem;
 
   @Before
@@ -79,7 +82,8 @@ public class TestErasureCodingPolicies {
     DFSTestUtil.createFile(fs, replicatedFile, 0, (short) 3, 0L);
 
     // set ec policy on dir
-    fs.setErasureCodingPolicy(dir, null);
+    fs.setErasureCodingPolicy(dir,
+        ErasureCodingPolicyManager.getSystemDefaultPolicy().getName());
     // create a file which should be using ec
     final Path ecSubDir = new Path(dir, "ecSubDir");
     final Path ecFile = new Path(ecSubDir, "ecFile");
@@ -131,7 +135,7 @@ public class TestErasureCodingPolicies {
     fs.mkdir(testDir, FsPermission.getDirDefault());
 
     /* Normal creation of an erasure coding directory */
-    fs.getClient().setErasureCodingPolicy(testDir.toString(), null);
+    fs.setErasureCodingPolicy(testDir, EC_POLICY.getName());
 
     /* Verify files under the directory are striped */
     final Path ECFilePath = new Path(testDir, "foo");
@@ -147,7 +151,7 @@ public class TestErasureCodingPolicies {
     fs.mkdir(notEmpty, FsPermission.getDirDefault());
     final Path oldFile = new Path(notEmpty, "old");
     fs.create(oldFile);
-    fs.getClient().setErasureCodingPolicy(notEmpty.toString(), null);
+    fs.setErasureCodingPolicy(notEmpty, EC_POLICY.getName());
     final Path newFile = new Path(notEmpty, "new");
     fs.create(newFile);
     INode oldInode = namesystem.getFSDirectory().getINode(oldFile.toString());
@@ -159,10 +163,10 @@ public class TestErasureCodingPolicies {
     final Path dir1 = new Path("/dir1");
     final Path dir2 = new Path(dir1, "dir2");
     fs.mkdir(dir1, FsPermission.getDirDefault());
-    fs.getClient().setErasureCodingPolicy(dir1.toString(), null);
+    fs.setErasureCodingPolicy(dir1, EC_POLICY.getName());
     fs.mkdir(dir2, FsPermission.getDirDefault());
     try {
-      fs.getClient().setErasureCodingPolicy(dir2.toString(), null);
+      fs.setErasureCodingPolicy(dir2, EC_POLICY.getName());
     } catch (IOException e) {
       fail("Nested erasure coding policies are supported");
     }
@@ -171,7 +175,7 @@ public class TestErasureCodingPolicies {
     final Path fPath = new Path("/file");
     fs.create(fPath);
     try {
-      fs.getClient().setErasureCodingPolicy(fPath.toString(), null);
+      fs.setErasureCodingPolicy(fPath, EC_POLICY.getName());
       fail("Erasure coding policy on file");
     } catch (IOException e) {
       assertExceptionContains("erasure coding policy for a file", e);
@@ -184,8 +188,8 @@ public class TestErasureCodingPolicies {
     final Path dstECDir = new Path("/dstEC");
     fs.mkdir(srcECDir, FsPermission.getDirDefault());
     fs.mkdir(dstECDir, FsPermission.getDirDefault());
-    fs.getClient().setErasureCodingPolicy(srcECDir.toString(), null);
-    fs.getClient().setErasureCodingPolicy(dstECDir.toString(), null);
+    fs.setErasureCodingPolicy(srcECDir, EC_POLICY.getName());
+    fs.setErasureCodingPolicy(dstECDir, EC_POLICY.getName());
     final Path srcFile = new Path(srcECDir, "foo");
     fs.create(srcFile);
 
@@ -219,7 +223,8 @@ public class TestErasureCodingPolicies {
   public void testReplication() throws IOException {
     final Path testDir = new Path("/ec");
     fs.mkdir(testDir, FsPermission.getDirDefault());
-    fs.setErasureCodingPolicy(testDir, null);
+    fs.setErasureCodingPolicy(testDir,
+        ErasureCodingPolicyManager.getSystemDefaultPolicy().getName());
     final Path fooFile = new Path(testDir, "foo");
     // create ec file with replication=0
     fs.create(fooFile, FsPermission.getFileDefault(), true,
@@ -240,8 +245,9 @@ public class TestErasureCodingPolicies {
     // dir EC policy should be null
     assertNull(fs.getClient().getFileInfo(src).getErasureCodingPolicy());
     // dir EC policy after setting
-    fs.getClient().setErasureCodingPolicy(src, null); //Default one will be used.
-    ErasureCodingPolicy sysDefaultECPolicy = ErasureCodingPolicyManager.getSystemDefaultPolicy();
+    ErasureCodingPolicy sysDefaultECPolicy =
+        ErasureCodingPolicyManager.getSystemDefaultPolicy();
+    fs.getClient().setErasureCodingPolicy(src, sysDefaultECPolicy.getName());
     verifyErasureCodingInfo(src, sysDefaultECPolicy);
     fs.create(new Path(ecDir, "child1")).close();
     // verify for the files in ec dir
@@ -262,7 +268,7 @@ public class TestErasureCodingPolicies {
     // dir ECInfo before being set
     assertNull(fs.getClient().getFileInfo(src).getErasureCodingPolicy());
     // dir ECInfo after set
-    fs.getClient().setErasureCodingPolicy(src, usingECPolicy);
+    fs.getClient().setErasureCodingPolicy(src, usingECPolicy.getName());
     verifyErasureCodingInfo(src, usingECPolicy);
     fs.create(new Path(ecDir, "child1")).close();
     // verify for the files in ec dir
@@ -290,12 +296,12 @@ public class TestErasureCodingPolicies {
     final Path ecDir = new Path(src);
     try {
       fs.mkdir(ecDir, FsPermission.getDirDefault());
-      fs.getClient().setErasureCodingPolicy(src, ecPolicy);
+      fs.getClient().setErasureCodingPolicy(src, ecPolicy.getName());
       fail("HadoopIllegalArgumentException should be thrown for"
           + "setting an invalid erasure coding policy");
     } catch (Exception e) {
-      assertExceptionContains("Policy [ RS-4-2-128k ] does not match " +
-          "any of the supported policies",e);
+      assertExceptionContains("Policy 'RS-4-2-128k' does not match " +
+          "any supported erasure coding policies",e);
     }
   }
 
@@ -337,13 +343,15 @@ public class TestErasureCodingPolicies {
       for (ErasureCodingPolicy policy : sysPolicies) {
         Path dir = new Path("/policy_" + policy.getId());
         fs.mkdir(dir, FsPermission.getDefault());
-        fs.setErasureCodingPolicy(dir, policy);
+        fs.setErasureCodingPolicy(dir, policy.getName());
         Path file = new Path(dir, "child");
         fs.create(file).close();
         assertEquals(policy, fs.getErasureCodingPolicy(file));
         assertEquals(policy, fs.getErasureCodingPolicy(dir));
         INode iNode = namesystem.getFSDirectory().getINode(file.toString());
-        assertEquals(policy.getId(), iNode.asFile().getFileReplication());
+        assertEquals(policy.getId(), iNode.asFile().getErasureCodingPolicyID());
+        assertEquals(INodeFile.DEFAULT_REPL_FOR_STRIPED_BLOCKS,
+            iNode.asFile().getFileReplication());
       }
     }
   }

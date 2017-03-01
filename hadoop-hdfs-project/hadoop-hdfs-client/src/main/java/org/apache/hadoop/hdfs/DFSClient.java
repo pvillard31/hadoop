@@ -2233,7 +2233,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
 
   /**
    * Requests the namenode to tell all datanodes to use a new, non-persistent
-   * bandwidth value for dfs.balance.bandwidthPerSec.
+   * bandwidth value for dfs.datanode.balance.bandwidthPerSec.
    * See {@link ClientProtocol#setBalancerBandwidth(long)}
    * for more details.
    *
@@ -2611,12 +2611,12 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
   }
 
 
-  public void setErasureCodingPolicy(String src, ErasureCodingPolicy ecPolicy)
+  public void setErasureCodingPolicy(String src, String ecPolicyName)
       throws IOException {
     checkOpen();
     try (TraceScope ignored =
              newPathTraceScope("setErasureCodingPolicy", src)) {
-      namenode.setErasureCodingPolicy(src, ecPolicy);
+      namenode.setErasureCodingPolicy(src, ecPolicyName);
     } catch (RemoteException re) {
       throw re.unwrapRemoteException(AccessControlException.class,
           SafeModeException.class,

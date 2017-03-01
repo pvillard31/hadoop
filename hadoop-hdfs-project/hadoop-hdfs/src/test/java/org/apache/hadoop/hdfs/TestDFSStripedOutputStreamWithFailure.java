@@ -214,14 +214,14 @@ public class TestDFSStripedOutputStreamWithFailure {
     final int numDNs = dataBlocks + parityBlocks;
     if (ErasureCodeNative.isNativeCodeLoaded()) {
       conf.set(
-          CodecUtil.IO_ERASURECODE_CODEC_RS_DEFAULT_RAWCODER_KEY,
+          CodecUtil.IO_ERASURECODE_CODEC_RS_RAWCODER_KEY,
           NativeRSRawErasureCoderFactory.class.getCanonicalName());
     }
     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(numDNs).build();
     cluster.waitActive();
     dfs = cluster.getFileSystem();
     dfs.mkdirs(dir);
-    dfs.setErasureCodingPolicy(dir, ecPolicy);
+    dfs.setErasureCodingPolicy(dir, ecPolicy.getName());
   }
 
   private void tearDown() {
